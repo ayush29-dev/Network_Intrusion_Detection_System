@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NIDS</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+
+  <!-- top bar -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-hex">N</div>
+      <div class="brand-text">
+        <div class="name">NIDS</div>
+        <div class="sub">Network Intrusion Detection System</div>
+      </div>
+    </div>
+
+    <div class="topbar-stats">
+      <div class="stat-pill">
+        <span class="sp-label">Nodes</span>
+        <span class="sp-val" id="statNodes">0</span>
+      </div>
+      <div class="stat-pill">
+        <span class="sp-label">Edges</span>
+        <span class="sp-val" id="statEdges">0</span>
+      </div>
+      <div class="stat-pill">
+        <span class="sp-label">Packets</span>
+        <span class="sp-val success" id="statPackets">0</span>
+      </div>
+      <div class="stat-pill">
+        <span class="sp-label">Intrusions</span>
+        <span class="sp-val danger" id="statIntrusions">0</span>
+      </div>
+      <div class="stat-pill">
+        <span class="sp-label">FW Rules</span>
+        <span class="sp-val warning" id="statRules">0</span>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="conn-badge dead" id="connBadge">
+      <div class="dot"></div>
+      <span id="connLabel">connecting...</span>
+    </div>
+  </div>
+
+  <!-- tabs -->
+  <div class="tabbar">
+    <div class="tab active" onclick="switchTab('canvas')">Network Canvas</div>
+    <div class="tab" onclick="switchTab('firewall')">Firewall Rules</div>
+    <div class="tab" onclick="switchTab('centrality')">Risk Analysis</div>
+  </div>
+
+  <div class="workspace">
+
+    <!-- sidebar -->
+    <div class="sidebar">
+      <div class="sb-section">
+        <div class="sb-section-title">Add Device</div>
+        <button class="device-btn" onclick="setNodeType('PC')">
+          <span class="d-icon">💻</span> Workstation
+        </button>
+        <button class="device-btn" onclick="setNodeType('SERVER')">
+          <span class="d-icon">🖥</span> Server
+        </button>
+        <button class="device-btn" onclick="setNodeType('ROUTER')">
+          <span class="d-icon">📡</span> Router
+        </button>
+        <button class="device-btn" onclick="setNodeType('FIREWALL')">
+          <span class="d-icon">🛡</span> Firewall
+        </button>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-title">Actions</div>
+        <button class="act-btn" onclick="setMode('connect')">⟶ Connect Nodes</button>
+        <button class="act-btn act-danger" onclick="setMode('delete')">✕ Delete Node</button>
+        <button class="act-btn act-success" onclick="sendPacket()">▶ Send Packet</button>
+        <button class="act-btn act-danger" onclick="simulateAttack()">⚡ Simulate Attack</button>
+        <button class="act-btn act-warning" onclick="runCentrality()">◈ Analyse Risk</button>
+        <button class="act-btn act-muted" onclick="clearAll()">↺ Clear Canvas</button>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-title">Mode</div>
+        <div class="mode-indicator m-add" id="modeIndicator">ADD NODE</div>
+      </div>
+    </div>
+
+    <!-- main canvas -->
+    <div class="view active" id="view-canvas">
+      <div class="canvas-wrap">
+        <svg id="canvas"></svg>
+      </div>
+    </div>
+
+    <!-- firewall tab -->
+    <div class="view" id="view-firewall">
+      <div class="fw-container">
+        <div class="view-title">Firewall Rules</div>
+        <div class="view-sub">
+          Rules are checked in priority order — lower number means higher priority.
+          First matching rule wins.
+        </div>
+
+        <div class="fw-form-card">
+          <div class="fw-form-title">Add Rule</div>
+          <div class="fw-form-grid">
+            <div class="fw-field">
+              <label>Action</label>
+              <select class="fw-select" id="fw-action">
+                <option value="block">BLOCK</option>
+                <option value="allow">ALLOW</option>
+              </select>
+            </div>
+            <div class="fw-field">
+              <label>Source IP</label>
+              <input class="fw-input" id="fw-ip" placeholder="e.g. 192.168.0.20"/>
+            </div>
+            <div class="fw-field">
+              <label>Port</label>
+              <input class="fw-input" id="fw-port" placeholder="80" type="number"/>
+            </div>
+            <div class="fw-field">
+              <label>Priority</label>
+              <input class="fw-input" id="fw-priority" placeholder="1" type="number" value="1"/>
+            </div>
+          </div>
+          <button class="fw-add-btn" onclick="addFirewallRule()">+ Add Rule</button>
+        </div>
+
+        <div class="fw-table-card">
+          <table class="fw-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Priority</th>
+                <th>Action</th>
+                <th>Source IP</th>
+                <th>Port</th>
+                <th>Added</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="fwTableBody">
+              <tr><td colspan="7" class="fw-empty">no rules yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- centrality tab -->
+    <div class="view" id="view-centrality">
+      <div class="cent-container">
+        <div class="view-title">Risk Analysis</div>
+        <div class="view-sub">
+          Uses betweenness centrality to find which node has the most traffic passing through it.
+          That node is the most critical — and the most likely attack target.
+        </div>
+        <button class="cent-run-btn" onclick="runCentrality()">▶ Run Analysis</button>
+
+        <div class="cent-cards" id="centCards" style="display:none">
+          <div class="cent-metric-card cm-warn">
+            <div class="cm-label">Highest Risk Node</div>
+            <div class="cm-val" id="cmNode">—</div>
+            <div class="cm-sub" id="cmNodeSub">—</div>
+          </div>
+          <div class="cent-metric-card">
+            <div class="cm-label">Centrality Score</div>
+            <div class="cm-val" id="cmScore">0</div>
+            <div class="cm-sub">shortest paths through it</div>
+          </div>
+          <div class="cent-metric-card">
+            <div class="cm-label">Nodes Analysed</div>
+            <div class="cm-val" id="cmTotal">0</div>
+            <div class="cm-sub">in current network</div>
+          </div>
+        </div>
+
+        <div class="cent-chart-card" id="centChart">
+          <div class="cent-chart-title">Score per Node</div>
+          <div id="centBars"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- right panel -->
+    <div class="right-panel">
+
+      <div class="rp-section">
+        <div class="rp-section-header">
+          <span class="rp-section-title">Node Info</span>
+        </div>
+        <div class="rp-section-body" id="nodeInfoBody">
+          <div class="np-empty">no node selected</div>
+        </div>
+      </div>
+
+      <div class="rp-section" style="flex:1;overflow:hidden;display:flex;flex-direction:column;">
+        <div class="rp-section-header">
+          <span class="rp-section-title">Live Alerts</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text3);" id="alertCountBadge">0</span>
+        </div>
+        <div class="alerts-list" id="alertsList">
+          <div class="alert-empty">no alerts yet</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script src="/app.js"></script>
+
+</body>
+</html>
